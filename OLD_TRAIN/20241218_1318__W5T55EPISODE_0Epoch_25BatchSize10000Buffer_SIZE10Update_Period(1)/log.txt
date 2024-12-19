@@ -1,0 +1,2 @@
+[2024-12-18 13:18:20] Epoch :000--Mean Left Over-pure:7.332106---Mean Left Over-mcts:0.000000
+[2024-12-18 13:18:32] Epoch :001--Mean Left Over-pure:1.221861---Mean Left Over-mcts:0.000000
