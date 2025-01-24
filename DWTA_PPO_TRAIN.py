@@ -8,6 +8,7 @@ from Dynamic_HYPER_PARAMETER import *
 from TORCH_OBJECTS import *
 import DWTA_BHGT as MCTS_Model
 import Dynamic_Sampling_BHGT as Sampler
+#import Dynamic_Sampling_Tree_Search as Sampler
 import DWTA_Evaluation
 import pandas as pd
 import ast
@@ -18,14 +19,15 @@ logger, result_folder_path = Get_Logger(SAVE_FOLDER_NAME)
 
 # create actor/critic
 actor = MCTS_Model.ACTOR().to(DEVICE)
-old_actor = MCTS_Model.ACTOR().to(DEVICE)
+# old_actor = MCTS_Model.ACTOR().to(DEVICE)
 critic = MCTS_Model.Critic().to(DEVICE)
+# beam = MCTS_Model.ACTOR().to(DEVICE)
 
 # target_model.load_state_dict(mcts_model.state_dict())
 actor.optimizer = optim.Adam(actor.parameters(), lr=ACTOR_LEARNING_RATE, weight_decay=ACTOR_WEIGHT_DECAY)
-critic.optimizer = optim.Adam(critic.parameters(), lr=ACTOR_LEARNING_RATE, weight_decay=ACTOR_WEIGHT_DECAY)
-actor.lr_stepper = lr_scheduler.MultiStepLR(actor.optimizer, milestones=[250], gamma=0.1)
-critic.lr_stepper = lr_scheduler.MultiStepLR(critic.optimizer, milestones=[250], gamma=0.1)
+critic.optimizer = optim.Adam(critic.parameters(), lr=CRITIC_LEARNING_RATE, weight_decay=CRITIC_WEIGHT_DECAY)
+actor.lr_stepper = lr_scheduler.MultiStepLR(actor.optimizer, milestones=[50, 300], gamma=0.1)
+critic.lr_stepper = lr_scheduler.MultiStepLR(critic.optimizer, milestones=[500], gamma=0.1)
 timer_start = time.time()
 
 EVAL_RESULT = []
@@ -39,14 +41,17 @@ file_name = './TEST_INSTANCE/5M_5N.xlsx'
 df = pd.read_excel(file_name)
 
 # Training loop
+epoch_objective =[]
 for epoch in range(TOTAL_EPOCH):
 
+    print(f"Epoch {epoch + 1}: Actor LR {actor.optimizer.param_groups[0]['lr']}, Critic LR {critic.optimizer.param_groups[0]['lr']}")
+
     for episode in range(1, TOTAL_EPISODE + 1):
-        Sampler.self_play(old_actor=old_actor, actor=actor, critic=critic, episode=episode, temp=None, epoch=epoch)
+        Sampler.self_play(old_actor=None, actor=actor, critic=critic, episode=episode, temp=None, epoch=epoch)
 
     obj_list_1 = list()
     obj_list_2 = list()
-    for i in range(1):
+    for i in range(100):
         # print("i ==", i)
 
         V = ast.literal_eval(df.loc[i]['V'])
@@ -60,23 +65,27 @@ for epoch in range(TOTAL_EPOCH):
         obj_list_2 = [0]
         # obj_2 = DWTA_Evaluation.evaluation(actor=actor,critic=critic, value=V, prob=prob_np, TW=TW, episode=None)
         # obj_list_2.append(obj_2)
-
+    obj_value = sum(obj_list_1)/len(obj_list_1)
+    epoch_objective.append(obj_value.item())
     time_str = time.strftime("%H:%M:%S", time.gmtime(time.time() - timer_start))
     log_str = 'Epoch :{:03d}--Mean Left Over-pure:{:5f}---Mean Left Over-mcts:{:5f}'.format(epoch, sum(obj_list_1)/len(obj_list_1), sum(obj_list_2)/len(obj_list_2))
     logger.info(log_str)
 
 # RESULT PLOT
+
 #if isinstance(obj_list_1, torch.Tensor):
-# obj_list_1_ = obj_list_1.cpu().numpy()
-#
-# plt.figure(figsize=(10, 5))
-# plt.plot(obj_list_1_, label='Objective 1')
-# plt.title('Evaluation Results')
-# plt.xlabel('Iteration')
-# plt.ylabel('Objective Value')
-# plt.legend()
-# plt.grid(True)
-#
-# # Save the plot
-# plt.savefig(f'{result_folder_path}/eval_result.jpg')
-# plt.close()
+
+obj = epoch_objective
+
+
+plt.figure(figsize=(10, 5))
+plt.plot(obj, label='Objective')
+plt.title('Evaluation Results')
+plt.xlabel('Iteration')
+plt.ylabel('Objective Value')
+plt.legend()
+plt.grid(True)
+
+# Save the plot
+plt.savefig(f'{result_folder_path}/eval_result.jpg')
+plt.close()

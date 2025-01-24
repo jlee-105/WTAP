@@ -35,7 +35,6 @@ class EmbeddingLayer(nn.Module):
 
         # self-attention b/w same nodes
 
-
         q = self.Wq(embedding)
         k = self.Wk(embedding)
         v = self.Wv(embedding)
@@ -98,8 +97,8 @@ class ACTOR(nn.Module):
         self.mask = None
         self.assignment_embedding = None
         self.current_state = None
-        self.memory = ReplayMemory(capacity=BUFFER_SIZE)
-        self.skip_embedding = nn.Parameter(torch.randn(1, EMBEDDING_DIM))
+        self.replay_memory = ReplayMemory(capacity=BUFFER_SIZE)
+        # self.skip_embedding = nn.Parameter(torch.randn(1, EMBEDDING_DIM))
 
     # def get_current_state(self, probability):
     #
@@ -157,14 +156,14 @@ class ACTOR(nn.Module):
 class LSTM(nn.Module):
     def __init__(self):
         super(LSTM, self).__init__()
-        # self.rnn = torch.nn.LSTM(HIDDEN_DIM, HIDDEN_DIM, num_layers=3, bias=True, batch_first=True, dropout=0.1,
-        #               bidirectional=False, proj_size=0, device='cpu', dtype=None)
-
+        #self.rnn = torch.nn.LSTM(HIDDEN_DIM, HIDDEN_DIM, num_layers=2, bias=True, batch_first=True, dropout=0.1,  bidirectional=False, proj_size=0, device=DEVICE, dtype=None)
 
         # head for policy
         self.policy_head_1 = nn.Linear(HIDDEN_DIM, 2*HIDDEN_DIM)  # Assuming a scalar output for simplicity
         self.policy_head_2 = nn.Linear(2*HIDDEN_DIM, HIDDEN_DIM)
         self.policy_head_3 = nn.Linear(HIDDEN_DIM, 1)
+
+        """ New try"""
         # self.value_head_1 = nn.Linear(HIDDEN_DIM, 2*HIDDEN_DIM)
         # self.value_head_2 = nn.Linear(2*HIDDEN_DIM, HIDDEN_DIM)
         # self.value_head_3 = nn.Linear(HIDDEN_DIM, 1)
@@ -172,71 +171,44 @@ class LSTM(nn.Module):
         self.gelu = nn.GELU()
         self.Leaky = nn.LeakyReLU()
         self.relu = nn.ReLU()
+        #self.sigmoid = nn.Sigmoid()
 
     def forward(self, state, mask):
 
-        #shared_result, (h_n, c_n) = self.rnn(state)
         shared_result = state
         # dim = n_batch, EMBEDDING_DIM
-        if shared_result.ndim == 2:
-            # value_nn = self.value_head_1(shared_result)
-            # value_nn = self.Leaky(value_nn)
-            # value_nn = self.value_head_2(value_nn)
-            # value_nn = self.Leaky(value_nn)
-            # value_nn = self.value_head_3(value_nn).view(NUM_WEAPONS*NUM_TARGETS+1)
-            # #value_nn = torch.mean(value_nn, dim=-1)
-            # mask = mask.view(NUM_WEAPONS*NUM_TARGETS+1)
-            # value_nn = value_nn*mask
-            # value_nn = torch.mean(value_nn, dim=-1)
 
-            policy_nn = self.policy_head_1(shared_result)
-            policy_nn = self.Leaky(policy_nn)
-            policy_nn = self.policy_head_2(policy_nn)
-            policy_nn = self.Leaky(policy_nn)
-            policy_nn = self.policy_head_3(policy_nn).view(NUM_WEAPONS * NUM_TARGETS + 1)
+        mask_c = mask.clone().bool()
+        # value_nn = self.value_head_1(shared_result)
+        # value_nn = self.relu(value_nn)
+        # value_nn = self.value_head_2(value_nn)
+        # value_nn = self.relu(value_nn)
+        # value_nn = self.value_head_3(value_nn).reshape(state.size(0), state.size(1), NUM_WEAPONS * NUM_TARGETS+1)
+        # value_nn = self.relu(value_nn)
+        # value_nn = value_nn * mask_c.reshape(state.size(0), state.size(1), NUM_WEAPONS * NUM_TARGETS+1)
+        # value_nn = torch.mean(value_nn, dim=-1)
 
-            # policy_nn = self.softmax(policy_nn)
-            mask = mask.view(NUM_WEAPONS * NUM_TARGETS + 1)
-            mask_c = mask.clone().bool()
-            policy_nn = policy_nn.masked_fill(~mask_c, float('-inf'))
-            # # Perform softmax on the masked vector
-            # if torch.isnan(policy_nn).any() or torch.isinf(policy_nn).any():
-            #     print("NaN or Inf detected in logits")
-            # print(policy_nn)
-            policy_nn = F.softmax(policy_nn, dim=-1)
-            #print("policy_nn", policy_nn)
 
-        # dim = n_batch, EMBEDDING_DIM
-        else:
-            # value_nn = self.value_head_1(shared_result)
-            # value_nn = self.Leaky(value_nn)
-            # value_nn = self.value_head_2(value_nn)
-            # value_nn = self.Leaky(value_nn)
-            # value_nn = self.value_head_3(value_nn).reshape(-1, NUM_WEAPONS * NUM_TARGETS+1)
-            #
-            # value_nn = value_nn * mask.reshape(-1, NUM_WEAPONS * NUM_TARGETS+1)
-            # value_nn = torch.mean(value_nn, dim=-1)
+        policy_nn = self.policy_head_1(shared_result)
+        policy_nn = self.relu(policy_nn)
+        policy_nn = self.policy_head_2(policy_nn)
+        policy_nn = self.relu(policy_nn)
+        policy_nn = self.policy_head_3(policy_nn).reshape(state.size(0), state.size(1), NUM_WEAPONS * NUM_TARGETS + 1)
 
-            policy_nn = self.policy_head_1(shared_result)
-            policy_nn = self.Leaky(policy_nn)
-            policy_nn = self.policy_head_2(policy_nn)
-            policy_nn = self.Leaky(policy_nn)
-            policy_nn = self.policy_head_3(policy_nn).reshape(shared_result.size(0), shared_result.size(1), NUM_WEAPONS * NUM_TARGETS + 1)
+        # policy_nn = self.softmax_2(policy_nn)
+        policy_nn = policy_nn.masked_fill(~mask_c, float('-inf'))
+        policy_nn = F.softmax(policy_nn, dim=-1)
+        # a = input()
 
-            # policy_nn = self.softmax_2(policy_nn)
-            mask_c = mask.clone().bool()
-            policy_nn = policy_nn.masked_fill(~mask_c, float('-inf'))
-            policy_nn = F.softmax(policy_nn, dim=-1)
-
-        return policy_nn, shared_result
+        return policy_nn,  shared_result
 
 
 class Critic(nn.Module):
     def __init__(self):
         super(Critic, self).__init__()
-        self.value_head_1 = nn.Linear(9, 2 * HIDDEN_DIM)
-        self.value_head_2 = nn.Linear(2 * HIDDEN_DIM, HIDDEN_DIM)
-        self.value_head_3 = nn.Linear(HIDDEN_DIM, HIDDEN_DIM)
+        self.value_head_1 = nn.Linear(9, HIDDEN_DIM)
+        self.value_head_2 = nn.Linear(HIDDEN_DIM, 2*HIDDEN_DIM)
+        self.value_head_3 = nn.Linear(2*HIDDEN_DIM, HIDDEN_DIM)
         self.value_head_4 = nn.Linear(HIDDEN_DIM, 1)
         # self.softmax_2 = nn.Softmax(dim=1)
         self.gelu = nn.GELU()
@@ -257,6 +229,7 @@ class Critic(nn.Module):
             value_nn = self.relu(value_nn)
             value_nn = self.value_head_4(value_nn).view(NUM_WEAPONS * NUM_TARGETS + 1)
             # value_nn = torch.mean(value_nn, dim=-1)
+            value_nn = self.relu(value_nn)
             mask = mask.view(NUM_WEAPONS * NUM_TARGETS + 1)
             value_nn = value_nn * mask
             value_nn = torch.mean(value_nn, dim=-1)
@@ -270,6 +243,7 @@ class Critic(nn.Module):
             value_nn = self.value_head_3(value_nn)
             value_nn = self.relu(value_nn)
             value_nn = self.value_head_4(value_nn)
+            value_nn = self.relu(value_nn)
             value_nn = value_nn.squeeze()
             value_nn = value_nn * mask.squeeze()
             value_nn = torch.mean(value_nn, dim=-1)
@@ -303,19 +277,54 @@ def multi_head_attention(q, k, v, mask):
         n_par = q.size(1)
         n_nodes = q.size(3)  # query size
         key_dim = q.size(4)
-        score = torch.matmul(q, k.transpose(3, 4))
+        # score = torch.matmul(q, k.transpose(3, 4))
+        #
+        # #mask = mask[:, :-1]
+        # # mask = mask.reshape(-1, NUM_WEAPONS * NUM_TARGETS)[:, None, None, :].expand(n_batch, n_head,
+        # #                                                                                NUM_WEAPONS * NUM_TARGETS,
+        # #                                                                                NUM_WEAPONS * NUM_TARGETS)
+        #
+        # mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, NUM_WEAPONS * NUM_TARGETS+1, NUM_WEAPONS * NUM_TARGETS+1)
+        # score_scaled = score / np.sqrt(key_dim)
+        # masked_score = score_scaled.masked_fill(mask == 0, float('-inf'))
+        #
+        # weights = nn.Softmax(dim=4)(masked_score)
+        # out = torch.matmul(weights, v)
+        # out_concat = out.reshape(n_batch, n_par, n_nodes, n_head * key_dim)
 
-        #mask = mask[:, :-1]
-        # mask = mask.reshape(-1, NUM_WEAPONS * NUM_TARGETS)[:, None, None, :].expand(n_batch, n_head,
-        #                                                                                NUM_WEAPONS * NUM_TARGETS,
-        #                                                                                NUM_WEAPONS * NUM_TARGETS)
 
-        mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, NUM_WEAPONS * NUM_TARGETS+1, NUM_WEAPONS * NUM_TARGETS+1)
+        # ----------------------------------------------------------------------------------------------------------
+        k_t = k.transpose(3, 4)
+        score_list = []
+        for q_chunk in torch.split(q, 300, dim=3):
+            # q_chunk => [n_batch, n_par, n_head, chunk_size, key_dim]
+            # matmul => [n_batch, n_par, n_head, chunk_size, n_nodes]
+            score_chunk = torch.matmul(q_chunk, k_t)
+            score_list.append(score_chunk)
+        # Concatenate back along dim=3
+        score = torch.cat(score_list, dim=3)  # => [n_batch, n_par, n_head, n_nodes, n_nodes]
+
+        # 2) Expand mask to match [n_batch, n_par, n_head, n_nodes, n_nodes]
+        mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, n_nodes, n_nodes)
+
+        # 3) Scale & mask
         score_scaled = score / np.sqrt(key_dim)
         masked_score = score_scaled.masked_fill(mask == 0, float('-inf'))
 
-        weights = nn.Softmax(dim=4)(masked_score)
-        out = torch.matmul(weights, v)
+        # 4) Softmax over last dim (dim=4)
+        weights = nn.Softmax(dim=4)(masked_score)  # => [n_batch, n_par, n_head, n_nodes, n_nodes]
+
+        # 5) Chunked matmul: out = weights x v
+        #    v => [n_batch, n_par, n_head, n_nodes, key_dim]
+        out_list = []
+        for w_chunk in torch.split(weights, 300, dim=3):
+            # w_chunk => [n_batch, n_par, n_head, chunk_size, n_nodes]
+            # matmul => [n_batch, n_par, n_head, chunk_size, key_dim]
+            out_chunk = torch.matmul(w_chunk, v)
+            out_list.append(out_chunk)
+        out = torch.cat(out_list, dim=3)  # => [n_batch, n_par, n_head, n_nodes, key_dim]
+
+        # 6) Final reshape
         out_concat = out.reshape(n_batch, n_par, n_nodes, n_head * key_dim)
 
 
@@ -355,28 +364,51 @@ class ReplayMemory:
         return len(self.memory)
 
 
+# class InstnaceNormalization(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#
+#         self.norm_by_batch  = nn.BatchNorm1d(EMBEDDING_DIM)
+#
+#
+#     def forward(self, x1, x2):
+#         x = x1+x2
+#         # x shape: [batch, par, n_nodes, feature]
+#         b, p, n, f = x.shape
+#         # Step 1 & 2: merge (b * p) and move feature dimension to the "channels"
+#         # After view: [b*p, n, f]
+#         # After permute: [b*p, f, n]  (channel-first for BatchNorm1d)
+#         x = x.view(b * p, n, f).permute(0, 2, 1)
+#
+#         # Step 3: apply normalization over the feature dimension
+#         x = self.norm_by_batch(x)  # shape stays [b*p, f, n]
+#
+#         # Step 4: permute back to [b*p, n, f], then reshape to [b, p, n, f]
+#         x = x.permute(0, 2, 1).view(b, p, n, f)
+#
+#         return x
+
 class InstnaceNormalization(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.norm_by_batch  = nn.BatchNorm1d((NUM_WEAPONS*NUM_TARGETS+1) * EMBEDDING_DIM)
+        self.norm_by_batch  = nn.BatchNorm1d(EMBEDDING_DIM)
 
 
     def forward(self, x1, x2):
         x = x1+x2
         # x shape: [batch, par, n_nodes, feature]
-        n_batch, n_par, n_nodes, n_feature = x.shape
+        b, p, n, f = x.shape
+        # Step 1 & 2: merge (b * p) and move feature dimension to the "channels"
+        # After view: [b*p, n, f]
+        # After permute: [b*p, f, n]  (channel-first for BatchNorm1d)
+        x = x.view(b * p, n, f).permute(0, 2, 1)
 
-        # Reshape to merge batch and par into a single dimension
-        # New shape: [batch * par, n_nodes * feature]
-        x = x.view(n_batch * n_par, n_nodes * n_feature)
+        # Step 3: apply normalization over the feature dimension
+        x = self.norm_by_batch(x)  # shape stays [b*p, f, n]
 
-        # Apply Batch Normalization
-        x = self.norm_by_batch(x)
-
-        # Reshape back to the original shape
-        x = x.view(n_batch, n_par, n_nodes, n_feature)
-
+        # Step 4: permute back to [b*p, n, f], then reshape to [b, p, n, f]
+        x = x.permute(0, 2, 1).view(b, p, n, f)
 
         return x
 

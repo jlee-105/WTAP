@@ -11,20 +11,23 @@ import ast
 import numpy as np
 import json
 import time
-from BEAM_WITH_SIMULATION import *
+from BEAM_WITH_SIMULATION_NOT_TRUNC import *
 
-SAVE_FOLDER_NAME = "REINFORCE-OLD_TRAIN-WITHOUT-MCTS-10-10-5-CP2000"
+SAVE_FOLDER_NAME = "TREE-10-5-10"
 print(SAVE_FOLDER_NAME)
 
 logger, result_folder_path = Get_Logger(SAVE_FOLDER_NAME)
 print(result_folder_path)
 actor = MCTS_Model.ACTOR().to(DEVICE)
-# critic = MCTS_Model.Critic().to(DEVICE)
-actor_path = 'Training/20250110_1521__W5T55EPISODE_0Epoch_25BatchSize10000Buffer_SIZE10Update_Period/CheckPoint_epoch00002/ACTOR_state_dic.pt'
+critic = MCTS_Model.Critic().to(DEVICE)
+actor_path =  'TRAIN/W5T55EPISODE_0Epoch_25BatchSize1000Buffer_SIZE10Update_Period/CheckPoint_epoch00030/ACTOR_state_dic.pt'
+critic_path = 'TRAIN/W5T55EPISODE_0Epoch_25BatchSize1000Buffer_SIZE10Update_Period/CheckPoint_epoch00398/Critic_state_dic.pt'
 actor.load_state_dict(torch.load(actor_path, map_location=torch.device(DEVICE), weights_only=False))
+critic.load_state_dict(torch.load(critic_path, map_location=torch.device(DEVICE), weights_only=False))
 actor.eval()
-# critic.eval()
-#
+critic.eval()
+
+
 
 # logger.info('==============================================================================')
 # logger.info('==============================================================================')
@@ -32,22 +35,19 @@ actor.eval()
 # logger.info(log_str)
 
 # data file name
-file_name='./TEST_INSTANCE/5M_5N.xlsx'
+file_name='./TEST_INSTANCE/10M_5N_10T.xlsx'
 df = pd.read_excel(file_name)
 
 ########################################
 # EVALUATION
 ########################################
 
-
-
-
-
 obj_container = list()
-for i in range(1):
+start_time = time.time()
+for i in range(100):
     start = time.time()
     print("index----", i)
-    i = i+2
+    i = i
 
     V = ast.literal_eval(df.loc[i]['V'])
     df['P'] = df['P'].apply(lambda x: np.array(json.loads(x)) if isinstance(x, str) else x)
@@ -67,47 +67,56 @@ for i in range(1):
     env_e = Environment(assignment_encoding=assignment_encoding, weapon_to_target_prob=weapon_to_target_prob, max_time=MAX_TIME)
 
     beam_actor = copy.deepcopy(actor)
+    beam_value = copy.deepcopy(critic)
+
     for time_clock in range(MAX_TIME):
 
         print("inference master time clock", time_clock)
 
         for index in range(NUM_WEAPONS):
 
+
+
             #check all possible expansions
             possible_actions = env_e.mask.clone()
 
-            if (possible_actions < NUM_WEAPONS*NUM_TARGETS).any():
+            # print("possible_actions", possible_actions)
 
+
+
+            if (possible_actions > 0).any():
 
                 beam_env = copy.deepcopy(env_e)
                 # print("beem_env____copied", beam_env)
                 # print("beem_env____copied----- current--target_value", beam_env.current_target_value)
                 # a = input()
                 # beam_actor = copy.deepcopy(actor)
-                beam_search = Beam_Search(actor=beam_actor, env=beam_env, available_actions=possible_actions)
+                beam_search = Beam_Search(actor=beam_actor, value=beam_value, env=beam_env, available_actions=possible_actions)
                 # dimension adjust
                 beam_search.reset()
-                node_index = beam_search.expand_actions()
-                selected_batch_index, selected_group_index = beam_search.do_beam_simulation(node_index = node_index, time=time_clock, w_index=index)
+                expanded_node_index = beam_search.expand_actions()
+                #print(expanded_node_index)
+                selected_batch_index, selected_group_index = beam_search.do_beam_simulation(possible_node_index = expanded_node_index, time=time_clock, w_index=index)
                 selected_action = selected_group_index.unsqueeze(dim=1)
                 # print("selected_batch_index----------------------------", selected_batch_index)
+                # print("selected_action_index", selected_action)
                 # a = input()
+                # print("beam----env---target_value", beam_env.current_target_value)
                 new_env = batch_dimension_resize(env=beam_env, batch_index=selected_batch_index, group_index=selected_group_index)
                 # print("new----env---target_value", new_env.current_target_value)
                 env_e = copy.deepcopy(new_env)
+                # print("env_e---target_value", env_e.current_target_value)
+                # a = input()
 
                 del beam_env
             else:
                 selected_action = torch.tensor([NUM_WEAPONS*NUM_TARGETS]).to(DEVICE)
                 selected_action = selected_action[None, :].expand(alpha, selected_action.size(0))
 
+            # print("master----action", selected_action)
+            # a = input()
             env_e.update_internal_variables(selected_action=selected_action)
             # print("new--_value", env_e.current_target_value)
-
-
-
-
-
             # print("selected_group_index", selected_group_index)
             # print("selected_group_index.shape", selected_group_index.shape)
             # selected_action = selected_group_index.unsqueeze(dim=1)
@@ -122,23 +131,40 @@ for i in range(1):
 
     # print("env-n_fires", env_e.n_fires)
     # print(env_e.current_target_value)
+    # print(env_e.current_target_value)
+    # a = input()
 
     obj_value =  (env_e.current_target_value[:, :, 0:NUM_TARGETS]).sum(2)
+    # print(obj_value)
+    # a = input()
+    obj_value_ = obj_value.squeeze()
+    obj_values = torch.min(obj_value_)
+    obj_container.append(obj_values)
 
-    # obj_value_ = obj_value.squeeze()
-    # obj_values = torch.min(obj_value_)
+    logger.info('---------------------------------------------------')
+    logger.info('value = {}'.format(obj_values))
+    logger.info('average = {}'.format(sum(obj_container) / len(obj_container)))
+    logger.info('---------------------------------------------------')
+    logger.info('---------------------------------------------------')
 
-    print(obj_value)
+end_time = time.time()
+
+logger.info('---------------------------------------------------')
+logger.info('average = {}'.format(sum(obj_container) / len(obj_container)))
+logger.info('time = {}'.format((end_time - start_time) / 100))
+logger.info('---------------------------------------------------')
+logger.info('---------------------------------------------------')
 
 
-    """ GET OBJECTIVE"""
-    # obj_value, _ = env_e.reward_calculation()
-    # obj_container.append(obj_values)
-    # logger.info('---------------------------------------------------')
-    # logger.info('average = {}'.format(obj_values))
-    # logger.info('average = {}'.format(sum(obj_container) / len(obj_container)))
-    # logger.info('---------------------------------------------------')
-    # logger.info('---------------------------------------------------')
+obj_cpu = [tensor.cpu().numpy() if hasattr(tensor, 'cpu') else tensor for tensor in obj_container]
+
+# Convert the list of NumPy arrays to a DataFrame
+df = pd.DataFrame(obj_cpu, columns=['obj'])
+
+# Save the DataFrame to a CSV file
+csv_file_path = 'TREE_SEARCH/TREE-10-5-10/TREE-10-5-10.csv'
+df.to_csv(csv_file_path, index=False)
+print(f"DataFrame saved to {csv_file_path}")
 
 
 

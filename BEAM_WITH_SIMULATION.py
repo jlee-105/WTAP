@@ -6,18 +6,19 @@ def expansion():
 
     return 0
 
-
-
 class Beam_Search:
 
-    def __init__(self, env, actor, available_actions):
+    def __init__(self, env, actor, value, available_actions):
 
         # assignment encoding
         self.beam_env = env
+        self.original_env = env
         # weapon-to-target probability (static)
         self.policy = actor
+        self.to_go_value = value
         # record weapon to target (dynamic)
         self.beam_available_actions = available_actions
+        self.beam_result = None
 
         self.assignment_encoding = None
         self.weapon_to_target_prob = None
@@ -84,32 +85,68 @@ class Beam_Search:
         # 18) n_fires
         self.n_fires = self.beam_env.n_fires
 
+        # print("reset---available_actions", self.assignment_encoding.shape)
+        # # print("reset----bean__current--env", self.beam_env.current_target_value)
+        # # print("reset----beam--reformatted--env", self.current_target_value)
+        # a = input()
+
     def expand_actions(self):
 
+        # check possible index
         possible_action_index = torch.where(self.beam_available_actions > 0)
-        print(possible_action_index)
+        # print("expanded_action_action", possible_action_index)
+        # alpha is batch
+
+        # print(possible_action_index)
+        # a = input()
 
         batch_idx = possible_action_index[0]
+        # print("expanded-----batch_idx", batch_idx)
+        # node is will be group
         node_index = possible_action_index[2]
+        # print("expanded-----node_index", node_index)
+        # a = input()
         unique_elements, counts = torch.unique(batch_idx, return_counts=True)
         max_count = counts.max()
+        # print("unique_element", unique_elements)
+        # a = input()
 
         selected_actions = torch.full(size=(self.beam_available_actions.size(0), max_count), fill_value=-1, dtype=torch.int64).to(DEVICE)
+        # print(selected_actions)
+        # a = input()
 
-        group_index = torch.arange(0, max_count, dtype=torch.int64).to(DEVICE)
-        print(group_index)
-        group_index =  group_index.repeat(self.beam_available_actions.size(0))
+        # Pad each batch's `node_index` to `max_count`
+        for batch in unique_elements:
+            batch_mask = batch_idx == batch
+            indices_for_batch = node_index[batch_mask]
 
-        print(batch_idx.type())
-        selected_actions[batch_idx, group_index] = node_index
-        print(selected_actions.shape)
+            # Pad the indices with the last value to match `max_count`
+            #
+            # if indices_for_batch.size(0) < max_count:
+            #     padding = indices_for_batch[-1:].repeat(max_count - indices_for_batch.size(0))
+            #     indices_for_batch = torch.cat((indices_for_batch, padding))
 
+            if indices_for_batch.size(0) < max_count:
+                padding = indices_for_batch[:1].repeat(max_count - indices_for_batch.size(0))
+                indices_for_batch = torch.cat((indices_for_batch, padding))
+
+            # if indices_for_batch.size(0) < max_count:
+            #     rand_idx = torch.randint(0, indices_for_batch.size(0),(1,), device=indices_for_batch.device)
+            #     padding_value = indices_for_batch[rand_idx]
+            #     padding = padding_value.repeat(max_count - indices_for_batch.size(0))
+            #     indices_for_batch = torch.cat((indices_for_batch, padding))
+
+            selected_actions[batch] = indices_for_batch
+
+        # print(selected_actions)
+        # a = input()
+
+        # print(self.current_target_value)
         self.update_internal_variables(selected_action=selected_actions)
-        print("i am here")
+        # print(self.current_target_value)
+        # a = input()
 
-        return 0
-
-
+        return selected_actions
 
 
     def update_internal_variables(self, selected_action):
@@ -141,7 +178,7 @@ class Beam_Search:
             # dim [batch, par, weapon, target]
             reduced_values = self.current_target_value[batch_id, par_id, weapon_index, target_index] * self.weapon_to_target_prob[batch_id, par_id,weapon_index,target_index]
             # shape: dim selected actions
-            reduced_values = reduced_values[:, None].expand(reduced_values.size(0), NUM_TARGETS)
+            reduced_values = reduced_values[:, None].expand(reduced_values.size(0), NUM_WEAPONS)
             self.current_target_value[batch_id, par_id, :, target_index] = self.current_target_value[batch_id, par_id, :, target_index] - reduced_values.float()
             # reshape of current target value
             self.current_target_value = self.current_target_value.reshape(batch_size, para_size, NUM_WEAPONS*NUM_TARGETS)
@@ -219,15 +256,16 @@ class Beam_Search:
             assignment_encoding_without_no_action = self.assignment_encoding[:, :, :-1 , :].detach().clone()
             assignment_encoding_without_no_action = assignment_encoding_without_no_action.reshape(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS, -1)
 
+
             # remaining ammunition update
-            remaining_ammunition = self.amm_availability.clone()[:, :, :, None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
+            remaining_ammunition = self.amm_availability.clone()[:, :, :, None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/max(AMM)
             assignment_encoding_without_no_action[batch_id, par_id, weapon_index, :, 0] = remaining_ammunition[batch_id, par_id, weapon_index, :].float()
 
             # weapon availability update
             assignment_encoding_without_no_action[batch_id, par_id, weapon_index, :, 1] = 0.0
 
             # number of fired
-            n_target_hit = self.n_target_hit.clone()[:, :, None, :].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
+            n_target_hit = self.n_target_hit.clone()[:, :, None, :].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/(NUM_TARGETS*MAX_TIME)
             assignment_encoding_without_no_action[batch_id, par_id, :, target_index, 4] = n_target_hit[batch_id, par_id, :, target_index]
 
             # target value
@@ -241,10 +279,16 @@ class Beam_Search:
 
         self.mask[:, :, -1] =1.0
 
-        # print("self.available_actions", self.available_actions)
+        # print("updated ---- status --- weapon-to-target-assign", self.weapon_to_target_assign)
+        # print("updated ---- status --- current-value", self.current_target_value)
+        # print("updated ---- status --- mask", self.mask)
         # a = input()
 
     def time_update(self):
+
+
+        # print("hey time updated")
+        # a = input()
 
         # move one clock
         self.clock = self.clock + 1
@@ -314,46 +358,230 @@ class Beam_Search:
         assignment_encoding_without_no_action[available_weapon_index[0], available_weapon_index[1], available_weapon_index[2], :, 1] = 1.0
 
         # weapon wait time update
-        updated_wait_time = self.weapon_wait_time.clone()[:, :, :,  None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
+        updated_wait_time = self.weapon_wait_time.clone()[:, :, :,  None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/max(PREPARATION_TIME)
         assignment_encoding_without_no_action[:, :, :, :, 3] = updated_wait_time
 
         # time left
-        assignment_encoding_without_no_action[:, :, :, :, 2] = self.time_left
+        assignment_encoding_without_no_action[:, :, :, :, 2] = self.time_left/MAX_TIME
 
         self.assignment_encoding[:, :, :-1, :] = assignment_encoding_without_no_action.reshape(batch_size, para_size, NUM_WEAPONS * NUM_TARGETS, -1)
 
 
         return 0
 
+    def select_best_actions(self, selected_actions, initial):
 
-    def do_beam_simulation(self):
+        # Find unique rows and their inverse indices for mapping
+        beam_results = self.beam_result.to('cpu')
+        # checking unique rows and indices
+        unique_rows, inverse_indices = torch.unique(beam_results, dim=0, return_inverse=True)
+
+        # Extract the indices of the original tensor corresponding to the unique rows
+        original_indices = []
+        for unique_row in unique_rows:
+            # Find the index of the first occurrence of each unique row in the original tensor
+            index = (beam_results == unique_row).all(dim=1).nonzero(as_tuple=True)[0][0]
+            original_indices.append(index)
+        original_indices = torch.tensor(original_indices)
+        intermediate_index = torch.sort(original_indices).values
+        unique_tensor = torch.unique(intermediate_index)
+
+
+        unique_rows = beam_results[unique_tensor, :]
+        flattened_unique = unique_rows.flatten()
+
+        sorted_values, sorted_indices = flattened_unique.sort(stable=True)
+
+        #----------------------------------------------------------------
+        # 1) Get unique values (sorted)
+        unique_vals = torch.unique(sorted_values, sorted=True)
+
+        # 2) For each unique value, find the first occurrence index from 'sorted_indices'
+        first_occ_indices = []
+        for val in unique_vals:
+            idx = (sorted_values == val).nonzero(as_tuple=True)[0][0]
+            first_occ_indices.append(sorted_indices[idx].item())
+
+        # 3) If fewer than 5 unique, replicate the earliest until we have 5
+        max_slots = alpha
+        if len(first_occ_indices) < max_slots:
+            # Number needed to reach 5
+            needed = max_slots - len(first_occ_indices)
+            earliest_idx = first_occ_indices[0]
+            # Insert the earliest index as many times as needed
+            for _ in range(needed):
+                # Insert right after the first element, so the earliest stays in front
+                first_occ_indices.insert(1, earliest_idx)
+        first_occ_indices = torch.tensor(first_occ_indices)
+
+        k = alpha
+        top_values = unique_vals[:k]
+        top_indices = first_occ_indices[:k]
+
+        # Step 3: Convert flat indices to [batch, group] indices in unique rows
+        unique_batch_indices = top_indices // unique_rows.size(1)
+        unique_group_indices = top_indices % unique_rows.size(1)
+        unique_batch_indices = unique_tensor[unique_batch_indices]
+
+        final_batch_indices = unique_batch_indices
+        final_group_indices = unique_group_indices
+
+        # Ensure all results are back on the original device
+        final_batch_indices = final_batch_indices.to(beam_results.device)
+        final_group_indices = final_group_indices.to(beam_results.device)
+        top_values = top_values.to(beam_results.device)
+
+        batch_indices = final_batch_indices
+
+
+        print("new_lines---------------------------------------------------")
+        print("selected_actions", selected_actions)
+        print("final_batch_indices", final_batch_indices)
+        print("final_group_index", final_group_indices)
+        print("new_line,----------------------------------------------------")
+
+        group_indices = selected_actions[final_batch_indices, final_group_indices]
+
+        # print("node_index", selected_actions)
+        # print("batch", batch_indices)
+        # print("group_index", group_indices)
+        # a = input()
+
+        return batch_indices, group_indices
+
+
+    def do_beam_simulation(self, possible_node_index, time, w_index):
+        """ This part main beam search part"""
+
+        # print("sibal------", possible_node_index)
+        # print("current_value ==", self.current_target_value[:, :, 0:NUM_TARGETS].sum(2))
+        # a = input()
 
         # set-up for simulation
+        if time + w_index == 0:
+            initial = 'yes'
+        else:
+            initial = 'no'
+
         start_time = self.n_fires // MAX_TIME
         start_weapon = self.n_fires % MAX_TIME
 
+        # print("start_weapon", start_weapon)
 
-        for time_clock in range(start_time, MAX_TIME):
-
-            for index in range(start_weapon, NUM_WEAPONS):
-                policy, _ = self.policy(assignment_embedding=self.assignment_encoding,  prob=self.weapon_to_target_prob, mask=self.mask)
-                # action_index = torch.multinomial(policy.view(-1, NUM_WEAPONS * NUM_TARGETS + 1), 1).view(env_e.assignment_encoding.size(0), env_e.assignment_encoding.size(1))
-                action_index = torch.multinomial(policy.view(-1, NUM_WEAPONS * NUM_TARGETS + 1), 1).view(self.assignment_encoding.size(0), self.assignment_encoding.size(1))
-                self.update_internal_variables(selected_action=action_index)
-
+        if start_weapon == 0:
             self.time_update()
-            start_weapon = 0
-
-        print("env.current_target_value", self.current_target_value)
-
-        obj_value = (self.current_target_value[:, :, 0:NUM_TARGETS]).sum(2)
-        print("env.n_fires", self.n_fires)
-        # obj_value_ = obj_value.squeeze()
-        # obj_values = torch.min(obj_value_)
-        print("obj_value", obj_value)
-        a = input()
 
 
+        left_over_step = NUM_WEAPONS*MAX_TIME - self.n_fires
+        limit = min(n_step, left_over_step)
+        iteration_count = 1
+
+        with torch.no_grad():
+            for time_clock in range(start_time, MAX_TIME):
+                #print("time_clock", time_clock)
+                if iteration_count >= limit:
+                    break
+                weapon_processed = 0
+
+                for index in range(start_weapon, NUM_WEAPONS):
+                    # print("weapon_index", index)
+                    # print("iteration", iteration_count)
+
+                    if iteration_count >= limit:
+                        break
+
+                    iteration_count +=1
+                    weapon_processed +=1
+
+                    policy,  _ = self.policy(assignment_embedding=self.assignment_encoding,  prob=self.weapon_to_target_prob, mask=self.mask)
+                    #print(policy)
+                    action_index = policy.view(-1, NUM_WEAPONS * NUM_TARGETS + 1).argmax(dim=1).view(self.assignment_encoding.size(0), self.assignment_encoding.size(1))
+                    self.update_internal_variables(selected_action=action_index)
+
+                total_weapons_for_this_step = NUM_WEAPONS - start_weapon
+
+                if weapon_processed == total_weapons_for_this_step:
+                    self.time_update()
+                    start_weapon = 0
+
+                else:
+                    # print("Partial step (didn't finish all weapons) without hitting limit. Stopping here.")
+                    break
+
+        value_traverse = 1 - self.current_target_value[:, :, 0:NUM_TARGETS].sum(2) / self.original_target_value[:, :, 0:NUM_TARGETS].sum(2)
+        to_go_value = self.to_go_value(state=self.assignment_encoding.clone().detach(), mask=self.mask.clone().detach())
+        q_value = -1 * (value_traverse + to_go_value)
+
+        if left_over_step<= n_step:
+            self.beam_result = self.current_target_value[:, :, 0:NUM_TARGETS].sum(2)
+        else:
+            self.beam_result = q_value
+        # print("min---so---far", self.current_target_value[:, :, 0:NUM_TARGETS].sum(2).min())
+        # print("min---so---far", q_value.min())
+        #a = input()
         # select_best_action
+        batch, group = self.select_best_actions(selected_actions = possible_node_index, initial = initial)
+        # a = input()
 
-        return obj_value
+
+        # print("batch",batch)
+        # print("group", group)
+        # a =input()
+
+        return batch, group
+
+
+def batch_dimension_resize(env, batch_index, group_index):
+
+    # print(env.assignment_encoding.shape)
+    # print(batch_index)
+    # print(group_index)
+    # a = input()
+
+    # 1) encoding
+    env.assignment_encoding = env.assignment_encoding[batch_index, :, :, :].clone()
+    # print(env.assignment_encoding.shape)
+    # a = input()
+    # 2) weapon-to-target probability
+    env.weapon_to_target_prob = env.weapon_to_target_prob[batch_index, :, :, :].clone()
+    # 3) weapon-to-target assign
+    env.weapon_to_target_assign = env.weapon_to_target_assign[batch_index, :, :].clone()
+    # 4) current_target_value
+    env.current_target_value = env.current_target_value[batch_index, :, :].clone()
+    # 5) current_target_value
+    env.original_target_value = env.original_target_value[batch_index, :, :].clone()
+    # 6) possible_weapons
+    env.possible_weapons = env.possible_weapons[batch_index, :, :].clone()
+    # 7) available actions
+    env.available_actions = env.available_actions[batch_index, :, :].clone()
+    # 8) mask
+    env.mask = env.mask[batch_index, :, :].clone()
+    # 9) weapon availability
+    env.weapon_availability = env.weapon_availability[batch_index, :, :].clone()
+    # 10) ammunition availability
+    env.amm_availability = env.amm_availability[batch_index, :, :].clone()
+    # 11) waiting time for each weapon
+    env.weapon_wait_time = env.weapon_wait_time[batch_index, :, :].clone()
+    # 13) target_availability
+    env.target_availability = env.target_availability[batch_index, :, :].clone()
+    # 14) target_start_time
+    env.target_start_time = env.target_start_time[batch_index, :, :].clone()
+    # 15) target_end time
+    env.target_end_time = env.target_end_time[batch_index, :, :].clone()
+    # 16) target hit
+    env.n_target_hit = env.n_target_hit[batch_index, :, :].clone()
+
+    #
+    # print("resize----", env.current_target_value)
+    # a = input()
+
+
+
+
+    return env
+
+
+
+
+
+

@@ -30,7 +30,7 @@ def Get_Logger(SAVE_FOLDER_NAME):
     # make_dir
     #######################################################
     prefix = datetime.datetime.now(pytz.timezone("America/Phoenix")).strftime("%Y%m%d_%H%M__")
-    result_folder_no_postfix = "./INFERENCE_TEST/{}".format(prefix + SAVE_FOLDER_NAME)
+    result_folder_no_postfix = "./ERROR/{}".format(SAVE_FOLDER_NAME)
 
     result_folder_path = result_folder_no_postfix
     folder_idx = 0
@@ -45,7 +45,7 @@ def Get_Logger(SAVE_FOLDER_NAME):
     logger = logging.getLogger(result_folder_path)  # this already includes streamHandler??
 
     streamHandler = logging.StreamHandler()
-    fileHandler = logging.FileHandler('{}/log.txt'.format(result_folder_path))
+    fileHandler = logging.FileHandler('{}/log_2.txt'.format(result_folder_path))
 
     formatter = logging.Formatter("[%(asctime)s] %(message)s", "%Y-%m-%d %H:%M:%S")
     formatter.converter = timetz
@@ -62,7 +62,7 @@ def Get_Logger(SAVE_FOLDER_NAME):
 
 
 def Extract_from_LogFile(result_folder_path, variable_name):
-    logfile_path = '{}/log.txt'.format(result_folder_path)
+    logfile_path = '{}/log_2.txt'.format(result_folder_path)
     with open(logfile_path) as f:
         datafile = f.readlines()
     found = False  # This isn't really necessary

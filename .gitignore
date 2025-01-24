@@ -1,3 +1,5 @@
 # Ignore a folder named "build"
 .idea/
 __pycache__/
+.venv
+TRAIN/

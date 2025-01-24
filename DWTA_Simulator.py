@@ -12,8 +12,8 @@ class Environment:
         # record weapon to target (dynamic)
         self.weapon_to_target_assign = torch.full(size=(assignment_encoding.size(0), assignment_encoding.size(1), NUM_WEAPONS), fill_value=-1).to(DEVICE)
         # target value initialization
-        self.current_target_value = assignment_encoding.clone()[:, :,  :-1, -2]
-        self.original_target_value = assignment_encoding.clone()[:, :, :-1, -2]
+        self.current_target_value = assignment_encoding.clone()[:, :,  :-1, -2]*MAX_TARGET_VALUE
+        self.original_target_value = assignment_encoding.clone()[:, :, :-1, -2]*MAX_TARGET_VALUE
         # weapon status
         self.all_weapon_NOT_done = torch.tensor(True).to(DEVICE)
         # tracking possible weapons
@@ -35,10 +35,12 @@ class Environment:
         self.mask = self.mask.clone() * active_target.float()
 
 
+
         # weapon availability
         self.weapon_availability = torch.full(size=(assignment_encoding.size(0), assignment_encoding.size(1), NUM_WEAPONS), fill_value=1.0).to(DEVICE)
         amm_availability = torch.tensor(AMM[:NUM_WEAPONS]).to(DEVICE)
         self.amm_availability = amm_availability[None, None, :].expand(assignment_encoding.size(0), assignment_encoding.size(1), amm_availability.size(0))
+
 
         # waiting time for each weapon
         self.weapon_wait_time = torch.full(size=(assignment_encoding.size(0), assignment_encoding.size(1), NUM_WEAPONS), fill_value=0.0).to(DEVICE)
@@ -52,9 +54,11 @@ class Environment:
         initial_available_target = (assignment_encoding[:, :, :, -4][:, :, :NUM_TARGETS]==0)
         self.target_availability = initial_available_target.float()
 
+
         # waiting time for each weapon
-        self.target_start_time = assignment_encoding.clone()[:, :, :, -4][:, :, :NUM_TARGETS]
-        self.target_end_time = assignment_encoding.clone()[:, :, :, -3][:, :, :NUM_TARGETS]
+        self.target_start_time = assignment_encoding.clone()[:, :, :, -4][:, :, :NUM_TARGETS]*MAX_TIME
+        self.target_end_time = assignment_encoding.clone()[:, :, :, -3][:, :, :NUM_TARGETS]*MAX_TIME
+
         # print("AFafaf", self.target_active_window)
         # self.target_window = assignment_encoding.clone()[:, :, :, 0][:,:, :NUM_TARGETS]
         self.n_target_hit = torch.full(size=(assignment_encoding.size(0), assignment_encoding.size(1), NUM_TARGETS), fill_value=0.0).to(DEVICE)
@@ -67,15 +71,8 @@ class Environment:
 
     def update_internal_variables(self, selected_action):
 
-        # print(selected_action.shape)
-        # a = input()
-
         batch_size = selected_action.size(0)
         para_size = selected_action.size(1)
-        print(para_size)
-        print(self.current_target_value.shape)
-        a = input()
-        a = input()
 
         if (selected_action < NUM_WEAPONS * NUM_TARGETS).any():
 
@@ -92,18 +89,16 @@ class Environment:
             weapon_index = selected_action[batch_id, par_id] // NUM_TARGETS
             target_index = selected_action[batch_id, par_id] % NUM_TARGETS
 
-            # print("weapon_index", weapon_index)
-            # print("target_index", target_index)
-            # print("self_a", self.available_actions.shape)
-            # a = input()
-
             self.current_target_value = self.current_target_value.reshape(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
             # dim [batch, par, weapon, target]
+
             reduced_values = self.current_target_value[batch_id, par_id, weapon_index, target_index] * self.weapon_to_target_prob[batch_id, par_id,weapon_index,target_index]
             # shape: dim selected actions
-            reduced_values = reduced_values[:, None].expand(reduced_values.size(0), NUM_TARGETS)
+
+            reduced_values = reduced_values[:, None].expand(reduced_values.size(0), NUM_WEAPONS)
             self.current_target_value[batch_id, par_id, :, target_index] = self.current_target_value[batch_id, par_id, :, target_index] - reduced_values.float()
             # reshape of current target value
+
             self.current_target_value = self.current_target_value.reshape(batch_size, para_size, NUM_WEAPONS*NUM_TARGETS)
             # additional weapon to target update
             self.weapon_to_target_assign[batch_id, par_id, weapon_index] = target_index
@@ -116,6 +111,7 @@ class Environment:
             # weapon availability update
             self.weapon_availability[(self.weapon_wait_time >0) | (self.amm_availability<=0)] = 0.0
             self.n_target_hit[batch_id, par_id, target_index] = self.n_target_hit.clone()[batch_id, par_id, target_index]+1
+
 
             # ammunition update
             self.amm_availability = self.amm_availability.clone()
@@ -180,29 +176,25 @@ class Environment:
             assignment_encoding_without_no_action = assignment_encoding_without_no_action.reshape(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS, -1)
 
             # remaining ammunition update
-            remaining_ammunition = self.amm_availability.clone()[:, :, :, None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
+            remaining_ammunition = self.amm_availability.clone()[:, :, :, None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/max(AMM)
             assignment_encoding_without_no_action[batch_id, par_id, weapon_index, :, 0] = remaining_ammunition[batch_id, par_id, weapon_index, :].float()
 
             # weapon availability update
             assignment_encoding_without_no_action[batch_id, par_id, weapon_index, :, 1] = 0.0
 
             # number of fired
-            n_target_hit = self.n_target_hit.clone()[:, :, None, :].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
+            n_target_hit = self.n_target_hit.clone()[:, :, None, :].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/(NUM_TARGETS*MAX_TIME)
             assignment_encoding_without_no_action[batch_id, par_id, :, target_index, 4] = n_target_hit[batch_id, par_id, :, target_index]
 
             # target value
             assignment_encoding_without_no_action[:, :, :, :, -2] = self.current_target_value.clone().reshape(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/MAX_TARGET_VALUE
-
             # reshape
             self.assignment_encoding[:, :, :-1 , :] = assignment_encoding_without_no_action.reshape(batch_size, para_size, NUM_WEAPONS * NUM_TARGETS,-1)
 
         else:
             self.n_fires = self.n_fires + 1
 
-        self.mask[:, :, -1] =1.0
-
-        # print("self.available_actions", self.available_actions)
-        # a = input()
+        self.mask[:, :, -1] = 1.0
 
         return 0
 
@@ -270,8 +262,16 @@ class Environment:
         self.available_actions = available_actions.reshape(batch_size, para_size, -1).clone()
         self.mask[:, :, :-1] = self.available_actions.clone()
 
-        # if self.clock == MAX_TIME:
+        # if self.clock == MAX_TIME-1:
+        #     self.mask[:, :, -1] = 0.0
+        #     all_zeros = self.mask.sum(dim=-1) == 0
+        #     for i in range(batch_size):
+        #         for j in range(para_size):
+        #             if all_zeros[i, j]:  # Direct checking
+        #                 self.mask[i, j, -1] = 1.0
+        # else:
         self.mask[:, :, -1] = 1.0
+
         # else:
         #     pass
 
@@ -285,12 +285,11 @@ class Environment:
         assignment_encoding_without_no_action[available_weapon_index[0], available_weapon_index[1], available_weapon_index[2], :, 1] = 1.0
 
         # weapon wait time update
-        updated_wait_time = self.weapon_wait_time.clone()[:, :, :,  None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)
+        updated_wait_time = self.weapon_wait_time.clone()[:, :, :,  None].expand(batch_size, para_size, NUM_WEAPONS, NUM_TARGETS)/max(PREPARATION_TIME)
         assignment_encoding_without_no_action[:, :, :, :, 3] = updated_wait_time
 
         # time left
-        assignment_encoding_without_no_action[:, :, :, :, 2] = self.time_left
-
+        assignment_encoding_without_no_action[:, :, :, :, 2] = self.time_left/MAX_TIME
         self.assignment_encoding[:, :, :-1, :] = assignment_encoding_without_no_action.reshape(batch_size, para_size, NUM_WEAPONS * NUM_TARGETS, -1)
 
 

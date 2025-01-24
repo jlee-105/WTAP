@@ -6,15 +6,17 @@
 ################################
 DEBUG = 'yes'
 ENCODER_NAME = 'HGT'
-NUM_WEAPONS = 5
-NUM_TARGETS = 5
+NUM_WEAPONS = 40
+NUM_TARGETS = 40
 MIN_TARGET_VALUE = 1
 MAX_TARGET_VALUE = 10
 MAX_TIME = 5
-PREPARATION_TIME = [1, 2, 1, 2, 1]
-MAX_TIME_WINDOW = [5, 5, 5, 5, 5]
-EMERGING_TIME = [0, 2, 1, 3, 0]
-AMM = [4, 3, 4, 3, 4]
+PREPARATION_TIME = [1, 2, 1, 2, 1,   1, 2, 1, 2, 1,   1, 2, 1, 2, 1,   1, 2, 1, 2, 1,   1, 2, 1, 2, 1,   1, 2, 1, 2, 1,   1, 2, 1, 2, 1,   1, 2, 1, 2, 1]#,   1, 2, 1, 2, 1,  1, 2, 1, 2, 1]
+# MAX_TIME_WINDOW = [10, 10, 10, 10, 10, 50, 50, 50, 50, 50]
+# EMERGING_TIME = [0, 2, 1, 3, 0,   0, 2, 1, 3, 0]
+AMM = [4, 4, 4, 4, 4,   4, 4, 4, 4, 4, 4, 4, 4, 4, 4,   4, 4, 4, 4, 4, 4, 4, 4, 4, 4,   4, 4, 4, 4, 4, 4, 4, 4, 4, 4,   4, 4, 4, 4, 4, 4, 4, 4, 4, 4,   4, 4, 4, 4, 4]#   10-10-10, 40, 30, 40, 30, 40, 4, 3, 4, 3, 4, 4, 3, 4, 3, 4]
+#AMM = [2, 2, 2, 2, 2,   2, 2, 2, 2, 2] #   (10-5-10)
+#AMM = [4, 3, 4, 3, 4,   4, 6, 8, 6, 8]#,   8, 6, 8, 6, 8,   8, 6, 8, 6, 8]
 LOW_PROB = 0.2
 HIGH_PROB = 0.9
 ###############################
@@ -22,21 +24,22 @@ HIGH_PROB = 0.9
 
 ###############################`
 TOTAL_EPISODE = 5             # flexible
-BUFFER_SIZE = 10000
+BUFFER_SIZE = 1000
 UPDATE_PERIOD = 10
-TOTAL_EPOCH = 2
+TOTAL_EPOCH = 300
 #TOTAL_EPOCH = TOTAL_EPISODE/UPDATE_PERIOD
 MINI_BATCH = MAX_TIME*NUM_WEAPONS
 EVALUATION_PERIOD = UPDATE_PERIOD
 NUM_EVALUATION = 200
-TRAIN_BATCH = 10
-PPO_EPOCHS = 3
+TRAIN_BATCH = 50
 VAL_BATCH = 1
 VAL_PARA = 1
-NUM_PAR = 10
+NUM_PAR = 5
 SYNC_TARGET = 60
-ACTOR_LEARNING_RATE = 1e-5
-ACTOR_WEIGHT_DECAY = 1e-7
+ACTOR_LEARNING_RATE = 1e-3
+ACTOR_WEIGHT_DECAY = 1e-3
+CRITIC_LEARNING_RATE = 1e-4
+CRITIC_WEIGHT_DECAY = 1e-6
 START_PUCT = 4.0
 EPS_MIN = 1.414
 EPS_TARGET = 1000
@@ -61,7 +64,9 @@ NUM_SIM = 100
 n_sim = max(1, int(NUM_SIM/(NUM_WEAPONS)))
 DEVICE = 'mps'
 
-alpha =3
+alpha = 2
+n_step = 10
+TEST_MODE ='yes'
 
 
 

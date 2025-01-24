@@ -1,8 +1,18 @@
-from Dynamic_Instance_generation import *
-from DWTA_Simulator import Environment
-import MCTS_WTAP
-import gc
 import copy
+
+import torch
+
+from Dynamic_HYPER_PARAMETER import *
+from TORCH_OBJECTS import *
+from Dynamic_Instance_generation import input_generation
+from DWTA_Simulator import Environment
+import DWTA_BHGT as MCTS_Model
+import time
+from utilities import Get_Logger
+from utilities import Average_Meter
+import os
+from datetime import datetime
+
 ########################################
 # EVALUATION
 ########################################
@@ -128,14 +138,21 @@ def evaluation_pure(model, value, prob, TW, episode):
 
         for index in range(NUM_WEAPONS):
 
-            policy, _ = model(assignment_embedding = env_e.assignment_encoding.detach().clone(), prob=weapon_to_target_prob.clone(), mask=env_e.mask.clone())
+            policy,  _ = model(assignment_embedding = env_e.assignment_encoding.detach().clone(), prob=weapon_to_target_prob.clone(), mask=env_e.mask.clone())
             # action_index = torch.multinomial(policy.view(-1, NUM_WEAPONS * NUM_TARGETS + 1), 1).view(env_e.assignment_encoding.size(0), env_e.assignment_encoding.size(1))
             action_index = torch.multinomial(policy.view(-1, NUM_WEAPONS * NUM_TARGETS + 1), 1).view(VAL_BATCH, VAL_PARA)
             env_e.update_internal_variables(selected_action=action_index)
+            #print("action_index", action_index)
+
         env_e.time_update()
 
+
+    #print((env_e.current_target_value[:, :, 0:NUM_TARGETS]))
     obj_value =  (env_e.current_target_value[:, :, 0:NUM_TARGETS]).sum(2)
+    #print("ob", obj_value)
     obj_value_ = obj_value.squeeze()
     obj_values = torch.min(obj_value_)
+    # print("obj_values", obj_values)
+    # a = input()
 
     return obj_values
