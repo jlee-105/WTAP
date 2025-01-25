@@ -434,11 +434,11 @@ class Beam_Search:
         batch_indices = final_batch_indices
 
 
-        print("new_lines---------------------------------------------------")
-        print("selected_actions", selected_actions)
-        print("final_batch_indices", final_batch_indices)
-        print("final_group_index", final_group_indices)
-        print("new_line,----------------------------------------------------")
+        # print("new_lines---------------------------------------------------")
+        # print("selected_actions", selected_actions)
+        # print("final_batch_indices", final_batch_indices)
+        # print("final_group_index", final_group_indices)
+        # print("new_line,----------------------------------------------------")
 
         group_indices = selected_actions[final_batch_indices, final_group_indices]
 
@@ -478,13 +478,13 @@ class Beam_Search:
 
         with torch.no_grad():
             for time_clock in range(start_time, MAX_TIME):
-                #print("time_clock", time_clock)
+                print("time_clock", time_clock)
                 if iteration_count >= limit:
                     break
                 weapon_processed = 0
 
                 for index in range(start_weapon, NUM_WEAPONS):
-                    # print("weapon_index", index)
+                    print("weapon_index", index)
                     # print("iteration", iteration_count)
 
                     if iteration_count >= limit:
@@ -516,8 +516,8 @@ class Beam_Search:
             self.beam_result = self.current_target_value[:, :, 0:NUM_TARGETS].sum(2)
         else:
             self.beam_result = q_value
-        # print("min---so---far", self.current_target_value[:, :, 0:NUM_TARGETS].sum(2).min())
-        # print("min---so---far", q_value.min())
+        print("min---so---far", self.current_target_value[:, :, 0:NUM_TARGETS].sum(2).min())
+        print("min---so---far", q_value.min())
         #a = input()
         # select_best_action
         batch, group = self.select_best_actions(selected_actions = possible_node_index, initial = initial)

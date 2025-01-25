@@ -1,5 +1,7 @@
 import pandas as pd
 from torch import no_grad
+import torch
+
 
 from Dynamic_Instance_generation import *
 from DWTA_Simulator import Environment
@@ -47,7 +49,7 @@ obj_container = list()
 start_time = time.time()
 
 with no_grad():
-    for i in range(1):
+    for i in range(100):
         start = time.time()
         print("index----", i)
         i = i
@@ -123,18 +125,18 @@ with no_grad():
     # print(env_e.current_target_value)
     # a = input()
 
-    obj_value =  (env_e.current_target_value[:, :, 0:NUM_TARGETS]).sum(2)
-    # print(obj_value)
-    # a = input()
-    obj_value_ = obj_value.squeeze()
-    obj_values = torch.min(obj_value_)
-    obj_container.append(obj_values)
+        obj_value =  (env_e.current_target_value[:, :, 0:NUM_TARGETS]).sum(2)
+        # print(obj_value)
+        # a = input()
+        obj_value_ = obj_value.squeeze()
+        obj_values = torch.min(obj_value_)
+        obj_container.append(obj_values)
 
-    logger.info('---------------------------------------------------')
-    logger.info('value = {}'.format(obj_values))
-    logger.info('average = {}'.format(sum(obj_container) / len(obj_container)))
-    logger.info('---------------------------------------------------')
-    logger.info('---------------------------------------------------')
+        logger.info('---------------------------------------------------')
+        logger.info('value = {}'.format(obj_values))
+        logger.info('average = {}'.format(sum(obj_container) / len(obj_container)))
+        logger.info('---------------------------------------------------')
+        logger.info('---------------------------------------------------')
 
 end_time = time.time()
 

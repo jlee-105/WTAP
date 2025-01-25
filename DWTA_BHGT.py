@@ -48,7 +48,6 @@ class EmbeddingLayer(nn.Module):
 
         out_concat = multi_head_attention(q=q_reshape, k=k_reshape, v=v_reshape, mask=mask)
         multi_head_out = self.Multi_head_combine(out_concat)
-
         out1 = self.Add_n_normalization(q, multi_head_out)
         out2 = self.feed_forward(out1)
         out3 = self.Add_n_normalization(out1, out2)
@@ -251,10 +250,101 @@ class Critic(nn.Module):
         return value_nn
 
 
+def chunked_inference_mha_4d(q, k, v, chunk_size_q=32, chunk_size_k=32, mask=None):
+
+
+    """
+    Chunked multi-head attention for inference (no gradients),
+    avoiding a giant (B, H, S, S) allocation.
+
+    q, k, v: (B, H, S, D)
+    chunk_size_q: how many query positions to process at once
+    chunk_size_k: how many key positions to process at once
+    mask (optional): broadcastable to (B, H, S, S)
+
+    Returns:
+      out: (B, H, S, D)
+    """
+    print("-------------------------------------------------")
+    B, H, S, D = q.shape
+
+    # We'll transpose K once => (B, H, D, S)
+    k_t = k.transpose(-1, -2)
+    # Prepare final output => (B, H, S, D)
+    out = torch.zeros_like(q)
+
+    for i_start in range(0, S, chunk_size_q):
+
+        print("i_start", i_start)
+
+        i_end = min(i_start + chunk_size_q, S)
+
+        # q_chunk => (B, H, chunk_q, D)
+        q_chunk = q[:, :, i_start:i_end, :]
+
+        # We'll accumulate partial scores => shape (B, H, chunk_q, S)
+        # but we won't store the entire (S, S) for all queries at once
+        partial_scores = torch.empty(
+            (B, H, i_end - i_start, S),
+            device=q.device,
+            dtype=q.dtype
+        )
+
+        # Fill partial_scores by chunking K as well
+        for j_start in range(0, S, chunk_size_k):
+
+            print("j_start", j_start)
+
+            j_end = min(j_start + chunk_size_k, S)
+            # k_t_chunk => (B, H, D, chunk_k)
+            k_t_chunk = k_t[:, :, :, j_start:j_end]
+
+            # partial => (B, H, chunk_q, chunk_k)
+            partial = torch.matmul(q_chunk, k_t_chunk)
+            partial_scores[..., j_start:j_end] = partial
+
+        # Optional: scale scores by sqrt(D)
+        partial_scores = partial_scores / (D ** 0.5)
+
+        # If there's a mask, apply it
+        if mask is not None:
+            # Mask shape must broadcast to (B, H, chunk_q, S)
+            partial_scores += mask[:, :, i_start:i_end, :]
+
+        # Softmax over last dimension => attn_weights (B, H, chunk_q, S)
+        attn_weights = F.softmax(partial_scores, dim=-1)
+
+        # Multiply by V => out_chunk shape (B, H, chunk_q, D)
+        out_chunk = torch.zeros(
+            (B, H, i_end - i_start, D),
+            device=q.device,
+            dtype=q.dtype
+        )
+
+        for j_start in range(0, S, chunk_size_k):
+
+            print("j_start", j_start)
+
+
+            j_end = min(j_start + chunk_size_k, S)
+            # slice attn_weights => (B, H, chunk_q, j_chunk)
+            attn_slice = attn_weights[..., j_start:j_end]
+            # slice v => (B, H, j_chunk, D)
+            v_slice = v[:, :, j_start:j_end, :]
+
+            out_chunk += torch.matmul(attn_slice, v_slice)
+
+        # Place result into final out
+        out[:, :, i_start:i_end, :] = out_chunk
+
+    return out
+
+
 def multi_head_attention(q, k, v, mask):
 
     # q, k, v: [number head, sequence size, key dim]
     if q.dim()==3:
+
         n_nodes = q.size(1)   # sequence size
         n_head = q.size(0)  # head size
         key_dim = q.size(2)   # query size
@@ -272,60 +362,38 @@ def multi_head_attention(q, k, v, mask):
         out = torch.matmul(weights, v)
         out_concat = out.reshape(n_nodes, n_head * key_dim)
     else:
-        n_head = q.size(2)  # sequence size
-        n_batch = q.size(0)  # head size
-        n_par = q.size(1)
+        n_head = q.size(2)   # num of head
+        n_batch = q.size(0)  # batch
+        n_par = q.size(1)    #
         n_nodes = q.size(3)  # query size
-        key_dim = q.size(4)
-        # score = torch.matmul(q, k.transpose(3, 4))
-        #
-        # #mask = mask[:, :-1]
-        # # mask = mask.reshape(-1, NUM_WEAPONS * NUM_TARGETS)[:, None, None, :].expand(n_batch, n_head,
-        # #                                                                                NUM_WEAPONS * NUM_TARGETS,
-        # #                                                                                NUM_WEAPONS * NUM_TARGETS)
-        #
-        # mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, NUM_WEAPONS * NUM_TARGETS+1, NUM_WEAPONS * NUM_TARGETS+1)
-        # score_scaled = score / np.sqrt(key_dim)
-        # masked_score = score_scaled.masked_fill(mask == 0, float('-inf'))
-        #
-        # weights = nn.Softmax(dim=4)(masked_score)
-        # out = torch.matmul(weights, v)
-        # out_concat = out.reshape(n_batch, n_par, n_nodes, n_head * key_dim)
+        key_dim = q.size(4)  # key dimension
+        mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, NUM_WEAPONS * NUM_TARGETS + 1, NUM_WEAPONS * NUM_TARGETS + 1)
 
+        if CHUNK == 'False':
+            score = torch.matmul(q, k.transpose(3, 4))
+            # mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, NUM_WEAPONS * NUM_TARGETS+1, NUM_WEAPONS * NUM_TARGETS+1)
+            score_scaled = score / np.sqrt(key_dim)
+            masked_score = score_scaled.masked_fill(mask == 0, float('-inf'))
+            weights = nn.Softmax(dim=4)(masked_score)
+            out = torch.matmul(weights, v)
+            out_concat = out.reshape(n_batch, n_par, n_nodes, n_head * key_dim)
+        else:
 
         # ----------------------------------------------------------------------------------------------------------
-        k_t = k.transpose(3, 4)
-        score_list = []
-        for q_chunk in torch.split(q, 300, dim=3):
-            # q_chunk => [n_batch, n_par, n_head, chunk_size, key_dim]
-            # matmul => [n_batch, n_par, n_head, chunk_size, n_nodes]
-            score_chunk = torch.matmul(q_chunk, k_t)
-            score_list.append(score_chunk)
-        # Concatenate back along dim=3
-        score = torch.cat(score_list, dim=3)  # => [n_batch, n_par, n_head, n_nodes, n_nodes]
+            n_batch, n_par, n_heads, n_nodes, d_head = q.shape
+            B = n_batch * n_par
 
-        # 2) Expand mask to match [n_batch, n_par, n_head, n_nodes, n_nodes]
-        mask = mask[:, :, None, None, :].expand(n_batch, n_par, n_head, n_nodes, n_nodes)
+            q_4d = q.reshape(B, n_heads, n_nodes, d_head)
+            k_4d = k.reshape(B, n_heads, n_nodes, d_head)
+            v_4d = v.reshape(B, n_heads, n_nodes, d_head)
 
-        # 3) Scale & mask
-        score_scaled = score / np.sqrt(key_dim)
-        masked_score = score_scaled.masked_fill(mask == 0, float('-inf'))
+            chunk_size_q = 32
+            chunk_size_k = 32
+            mask = mask.reshape(mask.size(0)*mask.size(1), mask.size(2), mask.size(3), mask.size(4))
+            out_4d = chunked_inference_mha_4d(q_4d, k_4d, v_4d, chunk_size_q=chunk_size_q, chunk_size_k=chunk_size_k, mask=mask)
+            out_concat = out_4d.reshape(n_batch, n_par, n_nodes, n_head*key_dim)
 
-        # 4) Softmax over last dim (dim=4)
-        weights = nn.Softmax(dim=4)(masked_score)  # => [n_batch, n_par, n_head, n_nodes, n_nodes]
-
-        # 5) Chunked matmul: out = weights x v
-        #    v => [n_batch, n_par, n_head, n_nodes, key_dim]
-        out_list = []
-        for w_chunk in torch.split(weights, 300, dim=3):
-            # w_chunk => [n_batch, n_par, n_head, chunk_size, n_nodes]
-            # matmul => [n_batch, n_par, n_head, chunk_size, key_dim]
-            out_chunk = torch.matmul(w_chunk, v)
-            out_list.append(out_chunk)
-        out = torch.cat(out_list, dim=3)  # => [n_batch, n_par, n_head, n_nodes, key_dim]
-
-        # 6) Final reshape
-        out_concat = out.reshape(n_batch, n_par, n_nodes, n_head * key_dim)
+            print("I am here------------------------------------------------------------------")
 
 
     return out_concat
